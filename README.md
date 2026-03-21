@@ -257,3 +257,7 @@ push 到 `main` 分支后 GitHub Actions 自动构建：
 ## 开源协议
 
 MIT License
+
+## 致谢
+
+本项目已在 [LINUX DO](https://linux.do) 社区发布，感谢社区的支持与反馈。
