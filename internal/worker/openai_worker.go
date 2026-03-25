@@ -105,14 +105,15 @@ const (
 	openaiAuthBase   = "https://auth.openai.com"
 	oauthClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
 	oauthRedirectURI = "http://localhost:1455/auth/callback"
+	openaiConsentURL = openaiAuthBase + "/sign-in-with-chatgpt/codex/consent"
 )
 
 // chromeProfile 完整的浏览器指纹配置（与 codex.py _CHROME_PROFILES 对齐）
 type chromeProfile struct {
-	ua              string // navigator.userAgent
-	secChUA         string // Sec-Ch-Ua 短版本
-	secChUAFull     string // Sec-Ch-Ua-Full-Version-List
-	secChUAPlatVer  string // Sec-Ch-Ua-Platform-Version（Windows 版本号）
+	ua             string // navigator.userAgent
+	secChUA        string // Sec-Ch-Ua 短版本
+	secChUAFull    string // Sec-Ch-Ua-Full-Version-List
+	secChUAPlatVer string // Sec-Ch-Ua-Platform-Version（Windows 版本号）
 }
 
 // chromeProfiles 4 个真实 Chrome 版本指纹（131/133/136/142）
@@ -210,50 +211,50 @@ func (r *openaiRegistrar) commonHeaders(referer string) map[string]string {
 	parentHex := fmt.Sprintf("%016x", rand.Int63())
 
 	return map[string]string{
-		"accept":                        "application/json",
-		"accept-language":               r.acceptLang,
-		"content-type":                  "application/json",
-		"origin":                        openaiAuthBase,
-		"referer":                       referer,
-		"user-agent":                    r.profile.ua,
-		"oai-device-id":                 r.sentinel.DeviceID,
-		"sec-ch-ua":                     r.profile.secChUA,
-		"sec-ch-ua-arch":                `"x86"`,
-		"sec-ch-ua-bitness":             `"64"`,
-		"sec-ch-ua-full-version-list":   r.profile.secChUAFull,
-		"sec-ch-ua-mobile":              "?0",
-		"sec-ch-ua-platform":            `"Windows"`,
-		"sec-ch-ua-platform-version":    `"` + r.profile.secChUAPlatVer + `"`,
-		"sec-fetch-dest":                "empty",
-		"sec-fetch-mode":                "cors",
-		"sec-fetch-site":                "same-origin",
-		"traceparent":                   fmt.Sprintf("00-0000000000000000%s-%s-01", traceHex, parentHex),
-		"tracestate":                    "dd=s:1;o:rum",
-		"x-datadog-origin":              "rum",
-		"x-datadog-parent-id":           parentID,
-		"x-datadog-sampling-priority":   "1",
-		"x-datadog-trace-id":            traceID,
+		"accept":                      "application/json",
+		"accept-language":             r.acceptLang,
+		"content-type":                "application/json",
+		"origin":                      openaiAuthBase,
+		"referer":                     referer,
+		"user-agent":                  r.profile.ua,
+		"oai-device-id":               r.sentinel.DeviceID,
+		"sec-ch-ua":                   r.profile.secChUA,
+		"sec-ch-ua-arch":              `"x86"`,
+		"sec-ch-ua-bitness":           `"64"`,
+		"sec-ch-ua-full-version-list": r.profile.secChUAFull,
+		"sec-ch-ua-mobile":            "?0",
+		"sec-ch-ua-platform":          `"Windows"`,
+		"sec-ch-ua-platform-version":  `"` + r.profile.secChUAPlatVer + `"`,
+		"sec-fetch-dest":              "empty",
+		"sec-fetch-mode":              "cors",
+		"sec-fetch-site":              "same-origin",
+		"traceparent":                 fmt.Sprintf("00-0000000000000000%s-%s-01", traceHex, parentHex),
+		"tracestate":                  "dd=s:1;o:rum",
+		"x-datadog-origin":            "rum",
+		"x-datadog-parent-id":         parentID,
+		"x-datadog-sampling-priority": "1",
+		"x-datadog-trace-id":          traceID,
 	}
 }
 
 // navHeaders 页面导航请求头（使用随机 Chrome 指纹）
 func (r *openaiRegistrar) navHeaders() map[string]string {
 	return map[string]string{
-		"accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-		"accept-language":           r.acceptLang,
-		"user-agent":                r.profile.ua,
-		"sec-ch-ua":                 r.profile.secChUA,
-		"sec-ch-ua-arch":            `"x86"`,
-		"sec-ch-ua-bitness":         `"64"`,
+		"accept":                      "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+		"accept-language":             r.acceptLang,
+		"user-agent":                  r.profile.ua,
+		"sec-ch-ua":                   r.profile.secChUA,
+		"sec-ch-ua-arch":              `"x86"`,
+		"sec-ch-ua-bitness":           `"64"`,
 		"sec-ch-ua-full-version-list": r.profile.secChUAFull,
-		"sec-ch-ua-mobile":          "?0",
-		"sec-ch-ua-platform":        `"Windows"`,
-		"sec-ch-ua-platform-version": `"` + r.profile.secChUAPlatVer + `"`,
-		"sec-fetch-dest":            "document",
-		"sec-fetch-mode":            "navigate",
-		"sec-fetch-site":            "same-origin",
-		"sec-fetch-user":            "?1",
-		"upgrade-insecure-requests": "1",
+		"sec-ch-ua-mobile":            "?0",
+		"sec-ch-ua-platform":          `"Windows"`,
+		"sec-ch-ua-platform-version":  `"` + r.profile.secChUAPlatVer + `"`,
+		"sec-fetch-dest":              "document",
+		"sec-fetch-mode":              "navigate",
+		"sec-fetch-site":              "same-origin",
+		"sec-fetch-user":              "?1",
+		"upgrade-insecure-requests":   "1",
 	}
 }
 
@@ -521,6 +522,74 @@ func extractCodeFromURL(rawURL string) string {
 	return u.Query().Get("code")
 }
 
+func extractContinueURLAndPageType(body []byte) (continueURL, pageType string) {
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", ""
+	}
+	for _, key := range []string{"continue_url", "url", "redirect_url"} {
+		if value, ok := result[key].(string); ok && value != "" {
+			continueURL = value
+			break
+		}
+	}
+	if page, ok := result["page"].(map[string]interface{}); ok {
+		pageType, _ = page["type"].(string)
+	}
+	return continueURL, pageType
+}
+
+func oauthNeedsEmailOTP(continueURL, pageType string) bool {
+	pageType = strings.ToLower(strings.TrimSpace(pageType))
+	continueURL = strings.ToLower(strings.TrimSpace(continueURL))
+	return pageType == "email_otp_verification" ||
+		strings.Contains(continueURL, "email-verification") ||
+		strings.Contains(continueURL, "email-otp")
+}
+
+func oauthNeedsConsentFallback(pageType string) bool {
+	pageType = strings.ToLower(strings.TrimSpace(pageType))
+	return strings.Contains(pageType, "consent") || strings.Contains(pageType, "organization")
+}
+
+func (r *openaiRegistrar) hasLoginSession() bool {
+	for _, cookie := range r.client.Jar.Cookies(mustParseURL(openaiAuthBase)) {
+		if cookie.Name == "login_session" {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *openaiRegistrar) bootstrapOAuthSession(ctx context.Context, authorizeURL, fallbackURL string) (string, error) {
+	resp, _, err := r.doRequest(ctx, "GET", authorizeURL, nil, r.navHeaders())
+	if err != nil {
+		return "", err
+	}
+
+	finalURL := authorizeURL
+	if resp != nil && resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	if r.hasLoginSession() {
+		return finalURL, nil
+	}
+
+	hdrs := r.navHeaders()
+	hdrs["referer"] = authorizeURL
+	resp, _, err = r.doRequest(ctx, "GET", fallbackURL, nil, hdrs)
+	if err != nil {
+		return finalURL, err
+	}
+	if resp != nil && resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	if !r.hasLoginSession() {
+		return finalURL, fmt.Errorf("未获取到 login_session cookie")
+	}
+	return finalURL, nil
+}
+
 // noRedirectClient 创建不跟随重定向的 HTTP 客户端（共享 transport 和 cookie jar）
 func (r *openaiRegistrar) noRedirectClient() *http.Client {
 	return &http.Client{
@@ -639,19 +708,18 @@ func (r *openaiRegistrar) step6(ctx context.Context) (string, error) {
 
 	// 确定 consent URL
 	consentURL := r.continueURL
-	// 默认 consent 路径
-	defaultConsent := openaiAuthBase + "/sign-in-with-chatgpt/codex/consent"
 
 	if consentURL == "" {
-		consentURL = defaultConsent
+		consentURL = openaiConsentURL
 	} else if strings.HasPrefix(consentURL, "/") {
 		consentURL = openaiAuthBase + consentURL
 	}
 
 	// OpenAI 新增手机验证/邮箱验证拦截页 → 跳过，直接走默认 consent 路径
-	if strings.Contains(consentURL, "/add-phone") || strings.Contains(consentURL, "/email-verification") {
+	normalizedConsentURL := strings.ToLower(consentURL)
+	if strings.Contains(normalizedConsentURL, "/add-phone") || strings.Contains(normalizedConsentURL, "/email-verification") {
 		r.logf("[*] 步骤6: 检测到拦截页 (%s)，跳过直接走 consent", truncStr(consentURL, 60))
-		consentURL = defaultConsent
+		consentURL = openaiConsentURL
 	}
 
 	r.logf("[*] consent URL: %s", truncStr(consentURL, 100))
@@ -958,12 +1026,10 @@ func (r *openaiRegistrar) oauthLogin(ctx context.Context, email, password string
 		"state":                 {login.state},
 	}
 	authorizeURL := openaiAuthBase + "/oauth/authorize?" + params.Encode()
-	resp, _, err := login.doRequest(ctx, "GET", authorizeURL, nil, login.navHeaders())
+	bootstrapURL := openaiAuthBase + "/api/oauth/oauth2/auth?" + params.Encode()
+	authorizeFinalURL, err := login.bootstrapOAuthSession(ctx, authorizeURL, bootstrapURL)
 	if err != nil {
 		return nil, fmt.Errorf("OAuth 登录步骤1 失败: %w", err)
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("OAuth 登录步骤1 HTTP %d", resp.StatusCode)
 	}
 
 	// 步骤L2: POST authorize/continue（提交邮箱）
@@ -972,7 +1038,7 @@ func (r *openaiRegistrar) oauthLogin(ctx context.Context, email, password string
 	if err != nil {
 		return nil, fmt.Errorf("OAuth 登录 sentinel(email) 失败: %w", err)
 	}
-	hdrs := login.commonHeaders(openaiAuthBase + "/log-in")
+	hdrs := login.commonHeaders(authorizeFinalURL)
 	hdrs["openai-sentinel-token"] = sentinelEmail
 
 	emailPayload, _ := json.Marshal(map[string]interface{}{
@@ -983,8 +1049,34 @@ func (r *openaiRegistrar) oauthLogin(ctx context.Context, email, password string
 	if err != nil {
 		return nil, fmt.Errorf("OAuth 登录步骤2 失败: %w", err)
 	}
+	if resp.StatusCode == http.StatusBadRequest && strings.Contains(strings.ToLower(string(body)), "invalid_auth_step") {
+		r.logf("[*] OAuth 登录步骤2 命中 invalid_auth_step，重新 bootstrap 后重试")
+		authorizeFinalURL, err = login.bootstrapOAuthSession(ctx, authorizeURL, bootstrapURL)
+		if err != nil {
+			return nil, fmt.Errorf("OAuth 登录步骤2 重置会话失败: %w", err)
+		}
+		sentinelEmail, err = login.sentinel.BuildToken(ctx, login.client, "authorize_continue")
+		if err != nil {
+			return nil, fmt.Errorf("OAuth 登录步骤2 重试 sentinel(email) 失败: %w", err)
+		}
+		hdrs = login.commonHeaders(authorizeFinalURL)
+		hdrs["openai-sentinel-token"] = sentinelEmail
+		resp, body, err = login.doRequest(ctx, "POST",
+			openaiAuthBase+"/api/accounts/authorize/continue", emailPayload, hdrs)
+		if err != nil {
+			return nil, fmt.Errorf("OAuth 登录步骤2 重试失败: %w", err)
+		}
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("OAuth 登录步骤2 HTTP %d: %s", resp.StatusCode, truncStr(string(body), 200))
+	}
+	if continueURL, pageType := extractContinueURLAndPageType(body); continueURL != "" || pageType != "" {
+		if continueURL != "" {
+			login.continueURL = continueURL
+		}
+		if pageType != "" {
+			r.logf("[*] OAuth 登录邮箱阶段 page.type: %s", pageType)
+		}
 	}
 
 	// 步骤L3: POST password/verify（提交密码）
@@ -1007,19 +1099,26 @@ func (r *openaiRegistrar) oauthLogin(ctx context.Context, email, password string
 	}
 
 	// 解析 continue_url
-	var pwdResult map[string]interface{}
-	if json.Unmarshal(body, &pwdResult) == nil {
-		if cu, ok := pwdResult["continue_url"].(string); ok && cu != "" {
-			login.continueURL = cu
-		}
+	pwdContinue, pwdPageType := extractContinueURLAndPageType(body)
+	if pwdContinue != "" {
+		login.continueURL = pwdContinue
 	}
-	if login.continueURL == "" {
+	if pwdPageType != "" {
+		r.logf("[*] OAuth 登录密码阶段 page.type: %s", pwdPageType)
+	}
+	if login.continueURL == "" && oauthNeedsConsentFallback(pwdPageType) {
+		login.continueURL = openaiConsentURL
+		r.logf("[*] OAuth 登录密码阶段未返回 continue_url，按 page.type 回退到 consent")
+	}
+	if login.continueURL == "" && !oauthNeedsEmailOTP(login.continueURL, pwdPageType) {
 		return nil, fmt.Errorf("OAuth 登录步骤3 未获取到 continue_url")
 	}
-	r.logf("[*] OAuth 登录 continue_url: %s", truncStr(login.continueURL, 80))
+	if login.continueURL != "" {
+		r.logf("[*] OAuth 登录 continue_url: %s", truncStr(login.continueURL, 80))
+	}
 
 	// 步骤L3b: 如果 continue_url 包含 email-verification，需要先完成邮箱 OTP 验证
-	if strings.Contains(login.continueURL, "email-verification") || strings.Contains(login.continueURL, "email-otp") {
+	if oauthNeedsEmailOTP(login.continueURL, pwdPageType) {
 		r.logf("[*] OAuth 登录: 检测到邮箱 OTP 验证要求，触发验证码...")
 
 		// 触发 OTP 发送
@@ -1050,13 +1149,14 @@ func (r *openaiRegistrar) oauthLogin(ctx context.Context, email, password string
 			return nil, fmt.Errorf("OAuth 登录 OTP 验证 HTTP %d: %s", resp.StatusCode, truncStr(string(body), 200))
 		}
 
-		// 解析新的 continue_url
-		var otpResult map[string]interface{}
-		if json.Unmarshal(body, &otpResult) == nil {
-			if cu, ok := otpResult["continue_url"].(string); ok && cu != "" {
-				login.continueURL = cu
-				r.logf("[*] OAuth 登录 OTP 后 continue_url: %s", truncStr(cu, 80))
-			}
+		otpContinue, otpPageType := extractContinueURLAndPageType(body)
+		if otpContinue != "" {
+			login.continueURL = otpContinue
+			r.logf("[*] OAuth 登录 OTP 后 continue_url: %s", truncStr(otpContinue, 80))
+		}
+		if login.continueURL == "" && oauthNeedsConsentFallback(otpPageType) {
+			login.continueURL = openaiConsentURL
+			r.logf("[*] OAuth 登录 OTP 后未返回 continue_url，按 page.type 回退到 consent")
 		}
 	}
 
@@ -1510,7 +1610,7 @@ func (w *OpenAIWorker) registerViaService(ctx context.Context, serviceURL string
 
 	reqBody := openaiServiceRequest{
 		Proxy:         proxyStr,
-		YYDSMailURL:   settingOrDefault(opts.Config, "yydsmail_base_url", ""),
+		YYDSMailURL:   settingOrDefault(opts.Config, "yydsmail_base_url", "https://maliapi.215.im"),
 		YYDSMailKey:   opts.Config["yydsmail_api_key"],
 		EmailPriority: strings.Join(epParts, ","),
 	}
@@ -1671,7 +1771,7 @@ func (w *OpenAIWorker) callRegisterScript(ctx context.Context, email, password s
 		}
 	}
 
-	yydsMailURL := settingOrDefault(opts.Config, "yydsmail_base_url", "")
+	yydsMailURL := settingOrDefault(opts.Config, "yydsmail_base_url", "https://maliapi.215.im")
 	yydsMailKey := opts.Config["yydsmail_api_key"]
 	if yydsMailURL != "" && yydsMailKey != "" {
 		args = append(args, "--yydsmail-url", yydsMailURL, "--yydsmail-key", yydsMailKey)
@@ -1790,7 +1890,7 @@ func genOpenAIPassword(length int) string {
 
 // ─── 辅助工具 ───
 
-var _ = cryptorand.Read  // 确保 import 不被剪枝
+var _ = cryptorand.Read // 确保 import 不被剪枝
 
 // extractProviderFromRemoteLogs 从远程服务日志中提取邮箱 provider 名
 // 远程日志格式: "[*] 邮箱: xxx@yyy.com (via yydsmail)" 等

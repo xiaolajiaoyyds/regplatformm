@@ -206,12 +206,12 @@ func (w *GeminiWorker) RegisterOne(ctx context.Context, opts RegisterOpts) {
 
 // geminiRegRequest Python 注册服务请求体
 type geminiRegRequest struct {
-	Email         string            `json:"email"`
-	Proxy         string            `json:"proxy,omitempty"`
-	YYDSMailURL   string            `json:"yydsmail_url,omitempty"`
-	YYDSMailKey   string            `json:"yydsmail_key,omitempty"`
-	MailProvider  string            `json:"mail_provider,omitempty"`
-	MailMeta      map[string]string `json:"mail_meta,omitempty"`
+	Email        string            `json:"email"`
+	Proxy        string            `json:"proxy,omitempty"`
+	YYDSMailURL  string            `json:"yydsmail_url,omitempty"`
+	YYDSMailKey  string            `json:"yydsmail_key,omitempty"`
+	MailProvider string            `json:"mail_provider,omitempty"`
+	MailMeta     map[string]string `json:"mail_meta,omitempty"`
 }
 
 // geminiRegResponse Python 注册服务响应体
@@ -240,15 +240,12 @@ func (w *GeminiWorker) callRegService(
 	logCh chan<- string,
 ) (*geminiRegResponse, json.RawMessage, error) {
 	reqBody := geminiRegRequest{
-		Email:         email,
-		Proxy:         proxy,
-		YYDSMailURL:   strings.TrimRight(cfg["yydsmail_base_url"], "/"),
-		YYDSMailKey:   cfg["yydsmail_api_key"],
-		MailProvider:  mailMeta["provider"],
-		MailMeta:      mailMeta,
-	}
-	if reqBody.YYDSMailURL == "" {
-		reqBody.YYDSMailURL = ""
+		Email:        email,
+		Proxy:        proxy,
+		YYDSMailURL:  normalizeRegYYDSMailBaseURL(cfg["yydsmail_base_url"]),
+		YYDSMailKey:  cfg["yydsmail_api_key"],
+		MailProvider: mailMeta["provider"],
+		MailMeta:     mailMeta,
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {

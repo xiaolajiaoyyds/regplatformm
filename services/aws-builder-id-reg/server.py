@@ -210,6 +210,8 @@ RE_HTML_SPAN_CODE = re.compile(
     re.IGNORECASE
 )
 
+DEFAULT_YYDSMAIL_BASE_URL = "https://maliapi.215.im"
+
 # 已移除域名黑名单机制：后台配什么邮箱 provider 就用什么
 
 
@@ -392,7 +394,8 @@ def _poll_yydsmail(yydsmail_url: str, yydsmail_key: str, email: str, meta: dict,
         logger.warning("[%s] yydsmail: 缺少 token", email)
         return None
 
-    list_url = f"{yydsmail_url.rstrip('/')}/v1/messages?address={urllib.parse.quote(email)}"
+    base_url = _normalize_yydsmail_base_url(yydsmail_url)
+    list_url = f"{base_url}/v1/messages?address={urllib.parse.quote(email)}"
     start = time.time()
     attempt = 0
     _consecutive_errors = 0
@@ -447,7 +450,7 @@ def _poll_yydsmail(yydsmail_url: str, yydsmail_key: str, email: str, meta: dict,
                 # 获取邮件详情
                 if msg_id:
                     try:
-                        detail_url = f"{yydsmail_url.rstrip('/')}/v1/messages/{urllib.parse.quote(msg_id, safe='')}"
+                        detail_url = f"{base_url}/v1/messages/{urllib.parse.quote(msg_id, safe='')}"
                         dreq = urllib.request.Request(detail_url)
                         dreq.add_header("Authorization", f"Bearer {token}")
                         dreq.add_header("User-Agent", "Mozilla/5.0 (compatible; RegPlatform/1.0)")
@@ -480,6 +483,13 @@ def _poll_yydsmail(yydsmail_url: str, yydsmail_key: str, email: str, meta: dict,
         else:
             time.sleep(2)
     return None
+
+
+def _normalize_yydsmail_base_url(raw: str) -> str:
+    base_url = (raw or "").strip().rstrip("/")
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3].rstrip("/")
+    return base_url or DEFAULT_YYDSMAIL_BASE_URL
 
 
 # ─── Mail.tm 轮询 ─────────────────────────────────────────────────────────────

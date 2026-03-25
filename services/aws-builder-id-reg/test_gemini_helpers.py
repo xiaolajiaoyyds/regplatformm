@@ -30,6 +30,19 @@ server = _load_server_module()
 
 
 class GeminiHelperTests(unittest.TestCase):
+    def test_normalize_yydsmail_base_url(self):
+        cases = [
+            ("", "https://maliapi.215.im"),
+            ("https://maliapi.215.im", "https://maliapi.215.im"),
+            ("https://maliapi.215.im/", "https://maliapi.215.im"),
+            ("https://maliapi.215.im/v1", "https://maliapi.215.im"),
+            ("https://maliapi.215.im/v1/", "https://maliapi.215.im"),
+        ]
+
+        for raw, want in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(server._normalize_yydsmail_base_url(raw), want)
+
     def test_extract_gemini_xsrf_from_hidden_input(self):
         html = """
         <form>

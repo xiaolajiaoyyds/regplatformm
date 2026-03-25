@@ -28,6 +28,8 @@ type YYDSMailProvider struct {
 	minDelay   time.Duration
 }
 
+const defaultYYDSMailBaseURL = "https://maliapi.215.im"
+
 type yydsMessage struct {
 	ID              string          `json:"id"`
 	Subject         string          `json:"subject"`
@@ -45,7 +47,7 @@ type yydsMessage struct {
 // apiKey: API Key（如 AC-xxxx）
 func NewYYDSMailProvider(baseURL, apiKey string) *YYDSMailProvider {
 	return &YYDSMailProvider{
-		baseURL:    strings.TrimRight(baseURL, "/"),
+		baseURL:    normalizeYYDSMailBaseURL(baseURL),
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
 		minDelay:   300 * time.Millisecond,
@@ -53,6 +55,23 @@ func NewYYDSMailProvider(baseURL, apiKey string) *YYDSMailProvider {
 }
 
 func (p *YYDSMailProvider) Name() string { return "yydsmail" }
+
+// normalizeYYDSMailBaseURL 统一 YYDS Mail 基址。
+// 文档和历史配置里同时出现过根域名和带 /v1 的写法，这里统一收敛到根域名，
+// 后续请求始终自行拼接 /v1/*，避免出现 /v1/v1/accounts 这类双前缀问题。
+func normalizeYYDSMailBaseURL(raw string) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if baseURL == "" {
+		return defaultYYDSMailBaseURL
+	}
+	if strings.HasSuffix(baseURL, "/v1") {
+		baseURL = strings.TrimSuffix(baseURL, "/v1")
+	}
+	if baseURL == "" {
+		return defaultYYDSMailBaseURL
+	}
+	return baseURL
+}
 
 // throttle 全局节流
 func (p *YYDSMailProvider) throttle() {

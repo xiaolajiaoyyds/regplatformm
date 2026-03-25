@@ -176,13 +176,13 @@ func (w *KiroWorker) RegisterOne(ctx context.Context, opts RegisterOpts) {
 
 // kiroRegRequest aws-builder-id-reg 服务请求体
 type kiroRegRequest struct {
-	Email         string            `json:"email"`
-	Proxy         string            `json:"proxy,omitempty"`
-	YYDSMailURL   string            `json:"yydsmail_url,omitempty"`
-	YYDSMailKey   string            `json:"yydsmail_key,omitempty"`
-	Region        string            `json:"region"`
-	MailProvider  string            `json:"mail_provider,omitempty"` // 邮箱 provider 类型（如 "yydsmail"）
-	MailMeta      map[string]string `json:"mail_meta,omitempty"`     // provider 特有元数据（token/sid_token 等）
+	Email        string            `json:"email"`
+	Proxy        string            `json:"proxy,omitempty"`
+	YYDSMailURL  string            `json:"yydsmail_url,omitempty"`
+	YYDSMailKey  string            `json:"yydsmail_key,omitempty"`
+	Region       string            `json:"region"`
+	MailProvider string            `json:"mail_provider,omitempty"` // 邮箱 provider 类型（如 "yydsmail"）
+	MailMeta     map[string]string `json:"mail_meta,omitempty"`     // provider 特有元数据（token/sid_token 等）
 }
 
 // kiroRegResponse aws-builder-id-reg 服务响应体
@@ -225,16 +225,13 @@ func (w *KiroWorker) callRegService(
 	logCh chan<- string,
 ) (*kiroRegResponse, json.RawMessage, error) {
 	reqBody := kiroRegRequest{
-		Email:          email,
-		Proxy:          proxy,
-		YYDSMailURL:    strings.TrimRight(cfg["yydsmail_base_url"], "/"),
-		YYDSMailKey:    cfg["yydsmail_api_key"],
-		Region:         "usa",
-		MailProvider:   mailMeta["provider"],
-		MailMeta:       mailMeta,
-	}
-	if reqBody.YYDSMailURL == "" {
-		reqBody.YYDSMailURL = ""
+		Email:        email,
+		Proxy:        proxy,
+		YYDSMailURL:  normalizeRegYYDSMailBaseURL(cfg["yydsmail_base_url"]),
+		YYDSMailKey:  cfg["yydsmail_api_key"],
+		Region:       "usa",
+		MailProvider: mailMeta["provider"],
+		MailMeta:     mailMeta,
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {

@@ -8,6 +8,32 @@ import (
 	"testing"
 )
 
+func TestNormalizeYYDSMailBaseURL(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "empty uses default", raw: "", want: defaultYYDSMailBaseURL},
+		{name: "root domain unchanged", raw: "https://maliapi.215.im", want: "https://maliapi.215.im"},
+		{name: "strip trailing slash", raw: "https://maliapi.215.im/", want: "https://maliapi.215.im"},
+		{name: "strip v1 suffix", raw: "https://maliapi.215.im/v1", want: "https://maliapi.215.im"},
+		{name: "strip v1 suffix with slash", raw: "https://maliapi.215.im/v1/", want: "https://maliapi.215.im"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := normalizeYYDSMailBaseURL(tc.raw); got != tc.want {
+				t.Fatalf("normalizeYYDSMailBaseURL(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestYYDSMailFetchVerificationCodeUsesLatestMessage(t *testing.T) {
 	t.Parallel()
 
