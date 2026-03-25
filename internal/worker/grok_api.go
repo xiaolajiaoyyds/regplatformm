@@ -177,89 +177,160 @@ func GrokProtocolRegisterHandler(c *gin.Context) {
 		return
 	}
 
-	// ─── Phase 1: 创建临时邮箱 ───
-	email, mailMeta, err := mailProvider.GenerateEmail(ctx)
-	if err != nil {
-		logf("[-] 创建邮箱失败: %s", err)
-		c.JSON(http.StatusOK, gin.H{"ok": false, "error": "initialization failed: " + err.Error(), "logs": logs})
+	// ─── Phase 1+2: 创建临时邮箱 + 发送验证码（带域名黑名单 + 拒绝检测重试） ───
+	var email string
+	var mailMeta map[string]string
+	password := randomString(15, "abcdefghijklmnopqrstuvwxyz0123456789")
+
+	emailOK := false
+	for emailAttempt := 0; emailAttempt < 5; emailAttempt++ {
+		if ctx.Err() != nil {
+			break
+		}
+
+		// Phase 1: 创建临时邮箱
+		candidate, meta, err := mailProvider.GenerateEmail(ctx)
+		if err != nil {
+			logf("[-] 创建邮箱失败: %s", err)
+			continue
+		}
+
+		// 检查域名黑名单
+		domain := emailDomain(candidate)
+		if grokIsDomainBanned(domain) {
+			logf("[*] 跳过已封禁域名 %s，重新申请邮箱...", domain)
+			go mailProvider.DeleteEmail(context.Background(), candidate, meta)
+			continue
+		}
+
+		email = candidate
+		mailMeta = meta
+		logf("[*] 邮箱: %s", email)
+
+		// Phase 2: 发送验证码 (gRPC-web)
+		logf("[*] 发送验证码...")
+		grpcBody := grpcweb.EncodeEmailCode(email)
+		sendResp, sendErr := w.doGRPCWeb(ctx, client, profile.UserAgent,
+			"https://accounts.x.ai/auth_mgmt.AuthManagement/CreateEmailValidationCode",
+			"https://accounts.x.ai", "https://accounts.x.ai/sign-up?redirect=grok-com",
+			grpcBody, nil)
+		if sendErr != nil || sendResp == nil || sendResp.StatusCode != 200 {
+			status := 0
+			var respBody string
+			if sendResp != nil {
+				status = sendResp.StatusCode
+				bodyBytes, _ := io.ReadAll(sendResp.Body)
+				sendResp.Body.Close()
+				respBody = string(bodyBytes)
+			}
+			// 检测域名拒绝
+			if strings.Contains(strings.ToLower(respBody), "rejected") || strings.Contains(strings.ToLower(respBody), "banned") || strings.Contains(strings.ToLower(respBody), "blocked") {
+				logf("[*] 邮箱域名 %s 被拒绝，加入黑名单并重试...", domain)
+				grokBanDomain(domain)
+				go mailProvider.DeleteEmail(context.Background(), email, mailMeta)
+				continue
+			}
+			logf("[-] 发送验证码失败: HTTP %d, %v", status, sendErr)
+			go mailProvider.DeleteEmail(context.Background(), email, mailMeta)
+			c.JSON(http.StatusOK, gin.H{"ok": false, "error": "verification failed", "email": email, "logs": logs})
+			return
+		}
+		sendResp.Body.Close()
+		logf("[+] 验证码已发送")
+		emailOK = true
+		break
+	}
+	if !emailOK {
+		logf("[-] 多次尝试后仍无法创建可用邮箱")
+		c.JSON(http.StatusOK, gin.H{"ok": false, "error": "email creation failed after retries", "logs": logs})
 		return
 	}
-	password := randomString(15, "abcdefghijklmnopqrstuvwxyz0123456789")
-	logf("[*] 邮箱: %s", email)
 
 	// 注册失败时清理邮箱
 	defer func() {
 		go mailProvider.DeleteEmail(context.Background(), email, mailMeta)
 	}()
 
-	// ─── Phase 2: 发送验证码 (gRPC-web) ───
-	logf("[*] 发送验证码...")
-	grpcBody := grpcweb.EncodeEmailCode(email)
-	sendResp, err := w.doGRPCWeb(ctx, client, profile.UserAgent,
-		"https://accounts.x.ai/auth_mgmt.AuthManagement/CreateEmailValidationCode",
-		"https://accounts.x.ai", "https://accounts.x.ai/sign-up?redirect=grok-com",
-		grpcBody, nil)
-	if err != nil || sendResp == nil || sendResp.StatusCode != 200 {
-		status := 0
-		if sendResp != nil {
-			status = sendResp.StatusCode
-			sendResp.Body.Close()
-		}
-		logf("[-] 发送验证码失败: HTTP %d, %v", status, err)
-		c.JSON(http.StatusOK, gin.H{"ok": false, "error": "verification failed", "email": email, "logs": logs})
-		return
-	}
-	sendResp.Body.Close()
-	logf("[+] 验证码已发送")
+	// ─── Phase 3+4: 获取验证码 + 验证邮箱（带重试和排除已试过的验证码） ───
+	triedCodes := make(map[string]bool)
+	verified := false
+	var verifiedCode string
 
-	// ─── Phase 3: 获取验证码 ───
-	logf("[*] 等待验证码（最长 45s）...")
-	var code string
-	for attempt := 1; attempt <= 45; attempt++ {
-		select {
-		case <-ctx.Done():
-			logf("[-] 等待验证码时任务被取消")
-			c.JSON(http.StatusOK, gin.H{"ok": false, "error": "cancelled", "email": email, "logs": logs})
-			return
-		case <-time.After(1 * time.Second):
-		}
-		c2, err := mailProvider.FetchVerificationCode(ctx, email, mailMeta, 1, 0)
-		if err == nil && c2 != "" {
-			code = c2
+	for codeAttempt := 0; codeAttempt < 3; codeAttempt++ {
+		if ctx.Err() != nil {
 			break
 		}
-		if attempt%5 == 0 {
-			logf("[*] 等待验证码中... 已等待 %ds", attempt)
+		if codeAttempt > 0 {
+			// 重新发送验证码
+			logf("[*] 重新发送验证码（第 %d 次重试）...", codeAttempt)
+			grpcBody := grpcweb.EncodeEmailCode(email)
+			sendResp, sendErr := w.doGRPCWeb(ctx, client, profile.UserAgent,
+				"https://accounts.x.ai/auth_mgmt.AuthManagement/CreateEmailValidationCode",
+				"https://accounts.x.ai", "https://accounts.x.ai/sign-up?redirect=grok-com",
+				grpcBody, nil)
+			if sendErr == nil && sendResp != nil {
+				sendResp.Body.Close()
+			}
+			ctxSleep(ctx, 2*time.Second)
 		}
-	}
-	if code == "" {
-		logf("[-] 获取验证码超时")
-		tempmail.RecordFailure(mailMeta["provider"])
-		c.JSON(http.StatusOK, gin.H{
-			"ok": false, "error": "verification code timeout",
-			"email": email, "provider": mailMeta["provider"], "logs": logs,
-		})
-		return
-	}
-	logf("[+] 验证码: %s", code)
-	tempmail.RecordSuccess(mailMeta["provider"])
 
-	// ─── Phase 4: 验证邮箱 (gRPC-web) ───
-	verifyBody := grpcweb.EncodeVerifyCode(email, code)
-	verifyResp, err := w.doGRPCWeb(ctx, client, profile.UserAgent,
-		"https://accounts.x.ai/auth_mgmt.AuthManagement/VerifyEmailValidationCode",
-		"https://accounts.x.ai", "https://accounts.x.ai/sign-up?redirect=grok-com",
-		verifyBody, nil)
-	if err != nil || verifyResp == nil || verifyResp.StatusCode != 200 {
-		if verifyResp != nil {
-			verifyResp.Body.Close()
+		// Phase 3: 获取验证码
+		logf("[*] 等待验证码（最长 45s）...")
+		var code string
+		for attempt := 1; attempt <= 45; attempt++ {
+			select {
+			case <-ctx.Done():
+				logf("[-] 等待验证码时任务被取消")
+				c.JSON(http.StatusOK, gin.H{"ok": false, "error": "cancelled", "email": email, "logs": logs})
+				return
+			case <-time.After(1 * time.Second):
+			}
+			c2, fetchErr := mailProvider.FetchVerificationCode(ctx, email, mailMeta, 1, 0)
+			if fetchErr == nil && c2 != "" && !triedCodes[c2] {
+				code = c2
+				break
+			}
+			if attempt%5 == 0 {
+				logf("[*] 等待验证码中... 已等待 %ds", attempt)
+			}
 		}
-		logf("[-] 验证邮箱失败")
-		c.JSON(http.StatusOK, gin.H{"ok": false, "error": "validation failed", "email": email, "logs": logs})
+		if code == "" {
+			logf("[-] 获取验证码超时")
+			if codeAttempt == 0 {
+				tempmail.RecordFailure(mailMeta["provider"])
+			}
+			continue
+		}
+		logf("[+] 验证码: %s", code)
+		triedCodes[code] = true
+		if codeAttempt == 0 {
+			tempmail.RecordSuccess(mailMeta["provider"])
+		}
+
+		// Phase 4: 验证邮箱 (gRPC-web)
+		verifyBody := grpcweb.EncodeVerifyCode(email, code)
+		verifyResp, verifyErr := w.doGRPCWeb(ctx, client, profile.UserAgent,
+			"https://accounts.x.ai/auth_mgmt.AuthManagement/VerifyEmailValidationCode",
+			"https://accounts.x.ai", "https://accounts.x.ai/sign-up?redirect=grok-com",
+			verifyBody, nil)
+		if verifyErr != nil || verifyResp == nil || verifyResp.StatusCode != 200 {
+			if verifyResp != nil {
+				verifyResp.Body.Close()
+			}
+			logf("[-] 验证码 %s 验证失败，排除后重试...", code)
+			continue
+		}
+		verifyResp.Body.Close()
+		logf("[+] 邮箱验证成功")
+		verified = true
+		verifiedCode = code
+		break
+	}
+	if !verified {
+		logf("[-] 验证码验证最终失败")
+		c.JSON(http.StatusOK, gin.H{"ok": false, "error": "validation failed after retries", "email": email, "logs": logs})
 		return
 	}
-	verifyResp.Body.Close()
-	logf("[+] 邮箱验证成功")
 
 	// ─── Phase 5+6: Turnstile + Server Actions 注册 ───
 	firstName := randomName(4, 6)
@@ -293,7 +364,7 @@ func GrokProtocolRegisterHandler(c *gin.Context) {
 		regOK := false
 		for regRetry := 0; regRetry < 2; regRetry++ {
 			regPayload := []map[string]interface{}{{
-				"emailValidationCode": code,
+				"emailValidationCode": verifiedCode,
 				"createUserAndSessionRequest": map[string]interface{}{
 					"email":              email,
 					"givenName":          firstName,

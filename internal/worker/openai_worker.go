@@ -715,9 +715,9 @@ func (r *openaiRegistrar) step6(ctx context.Context) (string, error) {
 		consentURL = openaiAuthBase + consentURL
 	}
 
-	// OpenAI 新增手机验证/邮箱验证拦截页 → 跳过，直接走默认 consent 路径
+	// OpenAI 新增手机验证/邮箱验证/个人资料拦截页 → 跳过，直接走默认 consent 路径
 	normalizedConsentURL := strings.ToLower(consentURL)
-	if strings.Contains(normalizedConsentURL, "/add-phone") || strings.Contains(normalizedConsentURL, "/email-verification") {
+	if strings.Contains(normalizedConsentURL, "/add-phone") || strings.Contains(normalizedConsentURL, "/email-verification") || strings.Contains(normalizedConsentURL, "/about-you") {
 		r.logf("[*] 步骤6: 检测到拦截页 (%s)，跳过直接走 consent", truncStr(consentURL, 60))
 		consentURL = openaiConsentURL
 	}
@@ -1038,7 +1038,7 @@ func (r *openaiRegistrar) oauthLogin(ctx context.Context, email, password string
 	if err != nil {
 		return nil, fmt.Errorf("OAuth 登录 sentinel(email) 失败: %w", err)
 	}
-	hdrs := login.commonHeaders(authorizeFinalURL)
+	hdrs := login.commonHeaders(openaiAuthBase + "/log-in")
 	hdrs["openai-sentinel-token"] = sentinelEmail
 
 	emailPayload, _ := json.Marshal(map[string]interface{}{
@@ -1099,18 +1099,18 @@ func (r *openaiRegistrar) oauthLogin(ctx context.Context, email, password string
 	}
 
 	// 解析 continue_url
-	pwdContinue, pwdPageType := extractContinueURLAndPageType(body)
-	if pwdContinue != "" {
-		login.continueURL = pwdContinue
+	continueURL, pageType := extractContinueURLAndPageType(body)
+	if continueURL != "" {
+		login.continueURL = continueURL
 	}
-	if pwdPageType != "" {
-		r.logf("[*] OAuth 登录密码阶段 page.type: %s", pwdPageType)
+	if pageType != "" {
+		r.logf("[*] OAuth 登录密码阶段 page.type: %s", pageType)
 	}
-	if login.continueURL == "" && oauthNeedsConsentFallback(pwdPageType) {
+	if login.continueURL == "" && oauthNeedsConsentFallback(pageType) {
 		login.continueURL = openaiConsentURL
 		r.logf("[*] OAuth 登录密码阶段未返回 continue_url，按 page.type 回退到 consent")
 	}
-	if login.continueURL == "" && !oauthNeedsEmailOTP(login.continueURL, pwdPageType) {
+	if login.continueURL == "" && !oauthNeedsEmailOTP(login.continueURL, pageType) {
 		return nil, fmt.Errorf("OAuth 登录步骤3 未获取到 continue_url")
 	}
 	if login.continueURL != "" {
@@ -1118,7 +1118,7 @@ func (r *openaiRegistrar) oauthLogin(ctx context.Context, email, password string
 	}
 
 	// 步骤L3b: 如果 continue_url 包含 email-verification，需要先完成邮箱 OTP 验证
-	if oauthNeedsEmailOTP(login.continueURL, pwdPageType) {
+	if oauthNeedsEmailOTP(login.continueURL, pageType) {
 		r.logf("[*] OAuth 登录: 检测到邮箱 OTP 验证要求，触发验证码...")
 
 		// 触发 OTP 发送
@@ -1149,14 +1149,25 @@ func (r *openaiRegistrar) oauthLogin(ctx context.Context, email, password string
 			return nil, fmt.Errorf("OAuth 登录 OTP 验证 HTTP %d: %s", resp.StatusCode, truncStr(string(body), 200))
 		}
 
-		otpContinue, otpPageType := extractContinueURLAndPageType(body)
-		if otpContinue != "" {
-			login.continueURL = otpContinue
-			r.logf("[*] OAuth 登录 OTP 后 continue_url: %s", truncStr(otpContinue, 80))
+		// 解析新的 continue_url
+		otpContinueURL, otpPageType := extractContinueURLAndPageType(body)
+		if otpContinueURL != "" {
+			login.continueURL = otpContinueURL
+			r.logf("[*] OAuth 登录 OTP 后 continue_url: %s", truncStr(otpContinueURL, 80))
 		}
 		if login.continueURL == "" && oauthNeedsConsentFallback(otpPageType) {
 			login.continueURL = openaiConsentURL
 			r.logf("[*] OAuth 登录 OTP 后未返回 continue_url，按 page.type 回退到 consent")
+		}
+	}
+
+	// 步骤L3c: 如果 continue_url 包含 about-you，需要先完成个人资料填写（create_account）
+	if strings.Contains(strings.ToLower(login.continueURL), "about-you") {
+		r.logf("[*] OAuth 登录: 检测到 about-you 页面，填写个人资料...")
+		firstName, lastName := randomOpenAIName()
+		birthdate := randomBirthdate()
+		if err := login.step5(ctx, firstName, lastName, birthdate); err != nil {
+			r.logf("[!] OAuth 登录 about-you 填写失败: %s（继续尝试 consent）", err)
 		}
 	}
 
@@ -1610,7 +1621,7 @@ func (w *OpenAIWorker) registerViaService(ctx context.Context, serviceURL string
 
 	reqBody := openaiServiceRequest{
 		Proxy:         proxyStr,
-		YYDSMailURL:   settingOrDefault(opts.Config, "yydsmail_base_url", "https://maliapi.215.im"),
+		YYDSMailURL:   settingOrDefault(opts.Config, "yydsmail_base_url", ""),
 		YYDSMailKey:   opts.Config["yydsmail_api_key"],
 		EmailPriority: strings.Join(epParts, ","),
 	}
@@ -1771,7 +1782,7 @@ func (w *OpenAIWorker) callRegisterScript(ctx context.Context, email, password s
 		}
 	}
 
-	yydsMailURL := settingOrDefault(opts.Config, "yydsmail_base_url", "https://maliapi.215.im")
+	yydsMailURL := settingOrDefault(opts.Config, "yydsmail_base_url", "")
 	yydsMailKey := opts.Config["yydsmail_api_key"]
 	if yydsMailURL != "" && yydsMailKey != "" {
 		args = append(args, "--yydsmail-url", yydsMailURL, "--yydsmail-key", yydsMailKey)

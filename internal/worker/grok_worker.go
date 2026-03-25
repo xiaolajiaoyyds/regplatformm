@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	cryptorand "crypto/rand"
@@ -60,6 +61,55 @@ var (
 	// 降级: JSON 引号内的 URL（引号自然截止）
 	reCookieURLQuoted = regexp.MustCompile(`(https://[^"\s]+set-cookie\?q=[^:"\s]+)`)
 )
+
+// ─── 邮箱域名黑名单（进程级缓存） ───
+
+var (
+	grokBannedDomains   = make(map[string]time.Time) // domain → banned time
+	grokBannedDomainsMu sync.RWMutex
+)
+
+// grokBanDomain 将域名加入黑名单
+func grokBanDomain(domain string) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" {
+		return
+	}
+	grokBannedDomainsMu.Lock()
+	grokBannedDomains[domain] = time.Now()
+	grokBannedDomainsMu.Unlock()
+}
+
+// grokIsDomainBanned 检查域名是否在黑名单中（1小时过期自动清除）
+func grokIsDomainBanned(domain string) bool {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" {
+		return false
+	}
+	grokBannedDomainsMu.RLock()
+	bannedAt, ok := grokBannedDomains[domain]
+	grokBannedDomainsMu.RUnlock()
+	if !ok {
+		return false
+	}
+	// 1小时过期，避免永久封禁误判
+	if time.Since(bannedAt) > time.Hour {
+		grokBannedDomainsMu.Lock()
+		delete(grokBannedDomains, domain)
+		grokBannedDomainsMu.Unlock()
+		return false
+	}
+	return true
+}
+
+// emailDomain 提取邮箱的域名部分
+func emailDomain(email string) string {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	return strings.ToLower(parts[1])
+}
 
 // ─── GrokWorker 实现 ───
 
